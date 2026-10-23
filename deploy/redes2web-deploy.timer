@@ -1,0 +1,10 @@
+[Unit]
+Description=Revisar nueva imagen de Redes2Web cada cinco minutos
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=redes2web-deploy.service
+
+[Install]
+WantedBy=timers.target
