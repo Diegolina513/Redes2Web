@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           docker run -d --name redes2web-ci -p 127.0.0.1:5000:5000 redes2web:ci
           trap 'docker logs redes2web-ci; docker rm -f redes2web-ci' EXIT
-          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 http://127.0.0.1:5000/ > /tmp/response.json
+          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:5000/ > /tmp/response.json
           python -c 'import json; assert json.load(open("/tmp/response.json")) == {"mensaje": "Servidor Flask funcionando"}'
       - name: Exportar imagen verificada
         if: github.event_name != 'pull_request' && vars.ENABLE_DOCKER_PUBLISH == 'true'
