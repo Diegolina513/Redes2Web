@@ -1,0 +1,83 @@
+name: Flask - pruebas, Docker y publicacion
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Pruebas e imagen Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Probar la aplicacion
+        run: python -m unittest discover -s tests -v
+      - name: Construir imagen
+        run: docker build -t redes2web:ci .
+      - name: Verificar contenedor por HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name redes2web-ci -p 127.0.0.1:5000:5000 redes2web:ci
+          trap 'docker logs redes2web-ci; docker rm -f redes2web-ci' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 http://127.0.0.1:5000/ > /tmp/response.json
+          python -c 'import json; assert json.load(open("/tmp/response.json")) == {"mensaje": "Servidor Flask funcionando"}'
+      - name: Exportar imagen verificada
+        if: github.event_name != 'pull_request' && vars.ENABLE_DOCKER_PUBLISH == 'true'
+        run: docker save redes2web:ci | gzip > /tmp/image.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && vars.ENABLE_DOCKER_PUBLISH == 'true'
+        with:
+          name: verified-image
+          path: /tmp/image.tar.gz
+          retention-days: 1
+
+  publish:
+    name: Publicar en Docker Hub
+    needs: verify
+    if: github.event_name != 'pull_request' && vars.ENABLE_DOCKER_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-image
+          path: /tmp
+      - name: Cargar imagen y autenticar
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$DOCKER_USER" && test -n "$DOCKER_PASSWORD"
+          gzip -dc /tmp/image.tar.gz | docker load
+          printf '%s' "$DOCKER_PASSWORD" | docker login --username "$DOCKER_USER" --password-stdin
+      - name: Publicar version y latest
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+        run: |
+          set -eu
+          docker tag redes2web:ci "$DOCKER_USER/redes2web:$GITHUB_SHA"
+          docker tag redes2web:ci "$DOCKER_USER/redes2web:latest"
+          docker push "$DOCKER_USER/redes2web:$GITHUB_SHA"
+          docker push "$DOCKER_USER/redes2web:latest"
+      - name: Cerrar sesion
+        if: always()
+        run: docker logout
